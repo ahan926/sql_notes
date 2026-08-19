@@ -371,3 +371,28 @@ WHERE co.order_date = (
     WHERE sub.customer_id = co.customer_id
 )
 ORDER BY co.customer_id ASC;
+
+-- ============================================================
+-- PRACTICE SET 19: EXECUTION ORDER, INDEXING & SARGABILITY
+-- ============================================================
+
+-- Problem 1: Logical Execution Order & Aggregations
+SELECT 
+    account_id, 
+    SUM(amount) AS total_completed_amount
+FROM transactions
+WHERE status = 'Completed'
+  AND EXTRACT(YEAR FROM transaction_date) = 2026
+GROUP BY account_id
+HAVING SUM(amount) > 10000
+ORDER BY total_completed_amount DESC;
+
+-- Problem 2: Optimal Composite Index DDL
+CREATE INDEX idx_users_status_region_created
+ON users (account_status, region, created_at DESC);
+
+-- Problem 3: SARGable Refactoring
+SELECT COUNT(log_id) AS event_count
+FROM logs
+WHERE log_timestamp >= '2026-08-01 00:00:00'
+  AND log_timestamp <  '2026-08-02 00:00:00';
