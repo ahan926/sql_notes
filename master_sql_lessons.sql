@@ -397,11 +397,20 @@ FROM logs
 WHERE log_timestamp >= '2026-08-01 00:00:00'
   AND log_timestamp <  '2026-08-02 00:00:00';
 
-  -- ============================================================
--- Master Practice Challenge #3
+-- ============================================================
+-- SQL Master Practice Challenge #3
 -- ============================================================
 
+-- ------------------------------------------------------------
 -- Problem 1: Aggregation & Multi-Condition Filtering
+-- Scenario: A bank wants to identify high-value accounts that had frequent
+-- large transfers during Q2 2026.
+-- Table: wire_transfers (transfer_id, account_id, amount, transfer_date, status)
+-- Task: Find all accounts that completed (status = 'Completed') at least 3
+-- transfers between '2026-04-01' and '2026-06-30' whose total completed transfer
+-- volume exceeds $50,000.
+-- ------------------------------------------------------------
+
 SELECT 
     account_id, 
     COUNT(transfer_id) AS transfer_count, 
@@ -415,7 +424,18 @@ HAVING COUNT(transfer_id) >= 3
    AND SUM(amount) > 50000
 ORDER BY total_volume DESC;
 
+
+-- ------------------------------------------------------------
 -- Problem 2: Outer Joins & Null Handling
+-- Scenario: An e-learning platform wants a report on course enrollment revenue,
+-- including courses with zero enrollments.
+-- Tables: 
+--   courses (course_id, course_name, price)
+--   enrollments (enrollment_id, course_id, user_id, discount_applied)
+-- Task: Calculate the total net revenue per course (price - discount_applied).
+-- Display $0.00 for courses with no enrollments.
+-- ------------------------------------------------------------
+
 SELECT 
     c.course_id, 
     c.course_name, 
@@ -427,7 +447,15 @@ LEFT JOIN enrollments e
 GROUP BY c.course_id, c.course_name, c.price
 ORDER BY total_revenue DESC, c.course_id ASC;
 
--- Problem 3: Window Functions (Running Totals)
+
+-- ------------------------------------------------------------
+-- Problem 3: Window Functions & Cumulative Running Totals
+-- Scenario: Finance wants to calculate a cumulative running total of daily
+-- sales revenue for January 2026.
+-- Table: daily_sales (sale_date, daily_revenue)
+-- Task: Use SUM() OVER (...) to generate a running revenue total for each day.
+-- ------------------------------------------------------------
+
 SELECT 
     sale_date, 
     daily_revenue, 
@@ -435,11 +463,29 @@ SELECT
 FROM daily_sales
 ORDER BY sale_date ASC;
 
--- Problem 4: Composite Index DDL
+
+-- ------------------------------------------------------------
+-- Problem 4: Composite Index Design
+-- Scenario: Create the optimal composite index for a table with 15M+ rows:
+--
+-- SELECT order_id, customer_id, order_total, created_at 
+-- FROM orders 
+-- WHERE store_id = 101 AND status = 'Shipped' AND created_at >= '2026-01-01' 
+-- ORDER BY created_at DESC;
+-- ------------------------------------------------------------
+
 CREATE INDEX idx_orders_store_status_created
 ON orders (store_id, status, created_at DESC);
 
--- Problem 5: Correlated Subquery (> 15% Category Average)
+
+-- ------------------------------------------------------------
+-- Problem 5: Correlated Subqueries & Relative Thresholds
+-- Scenario: HR wants to find employees earning > 15% above the average salary
+-- for their specific job title.
+-- Table: staff (emp_id, emp_name, job_title, salary)
+-- Task: Use a correlated subquery linking inner/outer rows on job_title.
+-- ------------------------------------------------------------
+
 SELECT 
     s.emp_id, 
     s.emp_name, 
@@ -453,7 +499,15 @@ WHERE s.salary > (
 ) * 1.15
 ORDER BY s.job_title ASC, s.salary DESC;
 
+
+-- ------------------------------------------------------------
 -- Problem 6: SARGable Date & String Optimization
+-- Scenario: Refactor the non-SARGable query:
+--
+-- SELECT customer_id, email, last_login FROM customers 
+-- WHERE UPPER(account_status) = 'ACTIVE' AND DATE(last_login) = '2026-05-15';
+-- ------------------------------------------------------------
+
 SELECT 
     customer_id, 
     email, 
