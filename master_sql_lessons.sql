@@ -396,3 +396,69 @@ SELECT COUNT(log_id) AS event_count
 FROM logs
 WHERE log_timestamp >= '2026-08-01 00:00:00'
   AND log_timestamp <  '2026-08-02 00:00:00';
+
+  -- ============================================================
+-- Master Practice Challenge #3
+-- ============================================================
+
+-- Problem 1: Aggregation & Multi-Condition Filtering
+SELECT 
+    account_id, 
+    COUNT(transfer_id) AS transfer_count, 
+    SUM(amount) AS total_volume
+FROM wire_transfers
+WHERE status = 'Completed'
+  AND transfer_date >= '2026-04-01'
+  AND transfer_date <= '2026-06-30'
+GROUP BY account_id
+HAVING COUNT(transfer_id) >= 3 
+   AND SUM(amount) > 50000
+ORDER BY total_volume DESC;
+
+-- Problem 2: Outer Joins & Null Handling
+SELECT 
+    c.course_id, 
+    c.course_name, 
+    c.price, 
+    COALESCE(SUM(c.price - COALESCE(e.discount_applied, 0.00)), 0.00) AS total_revenue
+FROM courses c
+LEFT JOIN enrollments e
+    ON c.course_id = e.course_id
+GROUP BY c.course_id, c.course_name, c.price
+ORDER BY total_revenue DESC, c.course_id ASC;
+
+-- Problem 3: Window Functions (Running Totals)
+SELECT 
+    sale_date, 
+    daily_revenue, 
+    SUM(daily_revenue) OVER (ORDER BY sale_date ASC) AS running_total_revenue
+FROM daily_sales
+ORDER BY sale_date ASC;
+
+-- Problem 4: Composite Index DDL
+CREATE INDEX idx_orders_store_status_created
+ON orders (store_id, status, created_at DESC);
+
+-- Problem 5: Correlated Subquery (> 15% Category Average)
+SELECT 
+    s.emp_id, 
+    s.emp_name, 
+    s.job_title, 
+    s.salary
+FROM staff s
+WHERE s.salary > (
+    SELECT AVG(sub.salary) 
+    FROM staff sub
+    WHERE sub.job_title = s.job_title
+) * 1.15
+ORDER BY s.job_title ASC, s.salary DESC;
+
+-- Problem 6: SARGable Date & String Optimization
+SELECT 
+    customer_id, 
+    email, 
+    last_login
+FROM customers
+WHERE account_status = 'ACTIVE'
+  AND last_login >= '2026-05-15 00:00:00'
+  AND last_login <  '2026-05-16 00:00:00';
