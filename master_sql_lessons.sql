@@ -516,3 +516,207 @@ FROM customers
 WHERE account_status = 'ACTIVE'
   AND last_login >= '2026-05-15 00:00:00'
   AND last_login <  '2026-05-16 00:00:00';
+
+ -- ============================================================
+-- SQL Master Practice Challenge #4 (Complete Reference)
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- Problem 1: Window Functions (Top 1 Per Group)
+--
+-- Scenario & Requirements:
+-- Table: watch_history (user_id, movie_id, watch_time_minutes, watched_at)
+-- Goal: Find the single most-watched movie per user based on total watch time.
+-- Requirements:
+--   1. Calculate total watch time per user and movie.
+--   2. Rank movies per user using ROW_NUMBER() in descending order of watch time.
+--   3. Break ties using the most recent watch timestamp (MAX(watched_at)).
+--   4. Filter to keep only rank 1 per user.
+--
+-- Key Takeaways & Guidelines:
+--   • ROW_NUMBER() guarantees exactly 1 row per partition (unlike RANK/DENSE_RANK).
+--   • In the OVER() clause, evaluate aggregations directly: ORDER BY SUM(watch_time_minutes) DESC.
+--   • Include explicit tie-breakers (e.g., MAX(watched_at) DESC) for deterministic output.
+-- ------------------------------------------------------------
+
+WITH RankedMovies AS (
+    SELECT 
+        user_id, 
+        movie_id, 
+        SUM(watch_time_minutes) AS total_watch_time,
+        ROW_NUMBER() OVER (
+            PARTITION BY user_id 
+            ORDER BY SUM(watch_time_minutes) DESC, MAX(watched_at) DESC
+        ) AS rn
+    FROM watch_history
+    GROUP BY user_id, movie_id
+)
+SELECT 
+    user_id, 
+    movie_id, 
+    total_watch_time
+FROM RankedMovies
+WHERE rn = 1
+ORDER BY user_id ASC;
+
+
+-- ------------------------------------------------------------
+-- Problem 2: Conditional Aggregation (Pivot Rows to Columns)
+--
+-- Scenario & Requirements:
+-- Table: orders (customer_id, order_status, order_amount)
+-- Goal: Executive revenue breakdown by order status per customer.
+-- Requirements:
+--   1. Aggregate revenue into 3 separate columns: completed_revenue, cancelled_revenue, returned_revenue.
+--   2. Use CASE WHEN inside SUM() to pivot status categories into columns.
+--   3. Wrap SUMs in COALESCE(..., 0.00) to avoid NULL values.
+--   4. Filter to only show customers with at least 1 completed order (HAVING clause).
+--
+-- Key Takeaways & Guidelines:
+--   • Conditional aggregation (SUM(CASE WHEN ...)) pivots rows into columns in a single pass over data.
+--   • COALESCE(SUM(...), 0.00) converts NULL sums (where no matching rows exist) to 0.00.
+--   • Filter aggregate results using HAVING (e.g., HAVING COUNT(CASE WHEN order_status = 'Completed' THEN 1 END) >= 1), not WHERE.
+-- ------------------------------------------------------------
+
+SELECT 
+    customer_id, 
+    COALESCE(SUM(CASE WHEN order_status = 'Completed' THEN order_amount ELSE 0 END), 0.00) AS completed_revenue,
+    COALESCE(SUM(CASE WHEN order_status = 'Cancelled' THEN order_amount ELSE 0 END), 0.00) AS cancelled_revenue,
+    COALESCE(SUM(CASE WHEN order_status = 'Returned'  THEN order_amount ELSE 0 END), 0.00) AS returned_revenue
+FROM orders
+GROUP BY customer_id
+HAVING COUNT(CASE WHEN order_status = 'Completed' THEN 1 END) >= 1
+ORDER BY completed_revenue DESC;
+
+
+-- ------------------------------------------------------------
+-- Problem 3: Multi-CTE Conversion Rate Pipeline
+--
+-- Scenario & Requirements:
+-- Tables: signups (user_id, channel, signup_date), subscriptions (user_id, plan_type)
+-- Goal: Conversion rate of 2026 signups to paid plans by acquisition channel.
+-- Requirements:
+--   1. CTE 1 (channel_signups): Count total signups per channel in 2026.
+--   2. CTE 2 (channel_conversions): Count distinct users who converted to a paid plan (plan_type != 'Free') in 2026.
+--   3. Main Query: Join CTEs on channel and calculate conversion_rate_pct = (conversions / total_signups) * 100.
+--   4. Use COALESCE to handle channels with 0 conversions and ROUND to 2 decimal places.
+--
+-- Key Takeaways & Guidelines:
+--   • Isolate signups vs. conversions into separate CTEs before joining to prevent fan-out / inflated counts.
+--   • Use half-open date bounds (signup_date >= '2026-01-01' AND signup_date < '2027-01-01') to preserve SARGability.
+--   • Use LEFT JOIN from base signups to conversions so 0-conversion channels remain included.
+--   • Multiply by 100.0 (float) to enforce decimal division across different RDBMS platforms.
+-- ------------------------------------------------------------
+
+WITH channel_signups AS (
+    SELECT 
+        channel, 
+        COUNT(user_id) AS total_signups
+    FROM signups
+    WHERE signup_date >= '2026-01-01' 
+      AND signup_date <  '2027-01-01'
+    GROUP BY channel
+),
+channel_conversions AS (
+    SELECT 
+        s.channel, 
+        COUNT(DISTINCT sub.user_id) AS converted_users
+    FROM signups s
+    JOIN subscriptions sub 
+        ON s.user_id = sub.user_id
+    WHERE s.signup_date >= '2026-01-01' 
+      AND s.signup_date <  '2027-01-01'
+      AND sub.plan_type != 'Free'
+    GROUP BY s.channel
+)
+SELECT 
+    cs.channel, 
+    cs.total_signups, 
+    COALESCE(cc.converted_users, 0) AS converted_users, 
+    ROUND((COALESCE(cc.converted_users, 0) * 100.0 / cs.total_signups), 2) AS conversion_rate_pct
+FROM channel_signups cs
+LEFT JOIN channel_conversions cc 
+    ON cs.channel = cc.channel
+ORDER BY conversion_rate_pct DESC;
+
+
+-- ------------------------------------------------------------
+-- Problem 4: Self-Joins & Hierarchical Data
+--
+-- Scenario & Requirements:
+-- Table: employees (emp_id, emp_name, job_title, manager_id, salary)
+-- Goal: Map employees to their direct managers using a self-join.
+-- Requirements:
+--   1. Self-join employees as e (employee) and m (manager) on e.manager_id = m.emp_id.
+--   2. Use LEFT JOIN so top-level employees (without a manager) are not excluded.
+--   3. Display emp_id, emp_name, job_title, manager_name (or 'No Manager'), and manager_salary.
+--
+-- Key Takeaways & Guidelines:
+--   • Explicit table aliasing (`e` for employee, `m` for manager) is essential for self-joins.
+--   • Join predicate must reflect relationship direction: `ON e.manager_id = m.emp_id`.
+--   • Use `LEFT JOIN` + `COALESCE(m.emp_name, 'No Manager')` to safely preserve root records (CEOs/executives).
+-- ------------------------------------------------------------
+
+SELECT 
+    e.emp_id, 
+    e.emp_name, 
+    e.job_title, 
+    COALESCE(m.emp_name, 'No Manager') AS manager_name, 
+    m.salary AS manager_salary
+FROM employees e
+LEFT JOIN employees m
+    ON e.manager_id = m.emp_id
+ORDER BY e.emp_id ASC;
+
+
+-- ------------------------------------------------------------
+-- Problem 5: Covering Index Design
+--
+-- Scenario & Requirements:
+-- Target Query:
+--   SELECT account_id, payment_method, SUM(amount)
+--   FROM payments
+--   WHERE payment_status = 'PROCESSED' AND payment_date >= '2026-01-01'
+--   GROUP BY account_id, payment_method;
+-- Goal: Create a composite index that covers all query columns to enable an Index-Only Scan.
+-- Requirements:
+--   1. Order index columns from Left to Right: Equality Filter -> Range Filter -> Group By Columns -> Aggregate Payload.
+--
+-- Key Takeaways & Guidelines:
+--   • A covering index contains all columns requested by a query, avoiding costly heap/table lookup operations.
+--   • Optimal Column Ordering Rules (Left-to-Right):
+--       1. Equality Filters (`payment_status = ...`)
+--       2. Range Filters (`payment_date >= ...`)
+--       3. GROUP BY Columns (`account_id, payment_method`)
+--       4. Included Aggregated Data (`amount`)
+--   • Modern engines (PostgreSQL, SQL Server) also support `INCLUDE (amount)` to separate keys from payload data.
+-- ------------------------------------------------------------
+
+CREATE INDEX idx_payments_covering
+ON payments (payment_status, payment_date, account_id, payment_method, amount);
+
+
+-- ------------------------------------------------------------
+-- Problem 6: SARGable Math Optimization
+--
+-- Scenario & Requirements:
+-- Non-SARGable Query:
+--   SELECT order_id, customer_id, order_subtotal
+--   FROM orders
+--   WHERE order_subtotal * 1.10 >= 550.00
+--     AND status = 'COMPLETED';
+-- Goal: Refactor the WHERE clause so that arithmetic operations are moved off the indexed column (order_subtotal), making the query SARGable.
+--
+-- Key Takeaways & Guidelines:
+--   • SARGable = Search Argument Able. Keeping functions/arithmetic off column names allows B-Tree index range scans.
+--   • Algebraic isolation: To undo `order_subtotal * 1.10 >= 550.00`, divide $550.00$ by $1.10$ ($550 / 1.10 = 500.00$).
+--   • Avoid multiplying by decimals like $0.90$ ($550 \times 0.90 = 495$), which is mathematically unequal to dividing by $1.10$.
+-- ------------------------------------------------------------
+
+SELECT 
+    order_id, 
+    customer_id, 
+    order_subtotal
+FROM orders
+WHERE order_subtotal >= 500.00
+  AND status = 'COMPLETED';
