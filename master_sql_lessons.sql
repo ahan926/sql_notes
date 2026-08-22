@@ -720,3 +720,396 @@ SELECT
 FROM orders
 WHERE order_subtotal >= 500.00
   AND status = 'COMPLETED';
+
+  -- ============================================================================
+-- SQL ADVANCED CONCEPTS LESSONS & BLUEPRINTS (NEW TOPICS)
+-- ============================================================================
+
+-------------------------------------------------------------------------------
+-- LESSON 1: Correlated Subqueries & Anti-Joins (NOT EXISTS vs. SELECT 1)
+-------------------------------------------------------------------------------
+-- [THE CONCEPT]
+-- EXISTS and NOT EXISTS check for the presence or absence of rows returned 
+-- by a subquery. They return TRUE or FALSE as soon as a match is found.
+--
+-- [WHY 'SELECT 1'?]
+-- In EXISTS / NOT EXISTS, the 1 is a dummy constant placeholder. SQL ignores 
+-- column values completely—it only checks if ANY row exists that satisfies 
+-- the subquery WHERE condition.
+--
+-- [SUBQUERY-FREE ALTERNATIVE]
+-- You CANNOT write NOT EXISTS without a subquery. However, you can write an 
+-- equivalent "Anti-Join" using LEFT JOIN + IS NULL.
+
+-- [EXISTS / NOT EXISTS BLUEPRINT (Gold Standard)]
+SELECT c.customer_id, c.customer_name
+FROM customers c
+WHERE NOT EXISTS (
+    SELECT 1 
+    FROM orders o 
+    WHERE o.customer_id = c.customer_id
+);
+
+-- [SUBQUERY-FREE ANTI-JOIN BLUEPRINT]
+SELECT c.customer_id, c.customer_name
+FROM customers c
+LEFT JOIN orders o 
+    ON c.customer_id = o.customer_id
+WHERE o.order_id IS NULL;
+
+
+-------------------------------------------------------------------------------
+-- LESSON 2: Positional Lookups (LEAD / LAG & Gaps and Islands)
+-------------------------------------------------------------------------------
+-- [THE CONCEPT]
+-- LEAD() and LAG() are window functions that let you look forward or backward
+-- across adjacent rows without performing complex self-joins.
+--   - LEAD(col): Fetches value from the NEXT row.
+--   - LAG(col): Fetches value from the PREVIOUS row.
+--
+-- [GAPS & ISLANDS LOGIC]
+-- In a sequential ID column (1, 2, 3, 4...), the NEXT number should always equal
+-- (CURRENT number + 1). If next_number != current_number + 1, a gap exists!
+
+-- [POSITIONAL LOOKUP BLUEPRINT]
+WITH NextInvoices AS (
+    SELECT 
+        invoice_number,
+        -- Look ahead to the next invoice number in sequence
+        LEAD(invoice_number) OVER (ORDER BY invoice_number ASC) AS next_invoice_number
+    FROM invoices
+)
+SELECT 
+    -- Column aliasing clarifies where the gap started in final reports
+    invoice_number AS missing_after_invoice_number,
+    next_invoice_number AS next_actual_invoice_number
+FROM NextInvoices
+WHERE next_invoice_number != invoice_number + 1;
+
+
+-------------------------------------------------------------------------------
+-- LESSON 3: Recursive CTEs (WITH RECURSIVE)
+-------------------------------------------------------------------------------
+-- [THE CONCEPT]
+-- A Recursive CTE calls itself repeatedly until it reaches the end of a chain.
+-- Used whenever data has a hierarchical, tree, or parent-child relationship
+-- (e.g., Organizational Charts, Category Trees, Bill of Materials).
+--
+-- [THE 3-PART BLUEPRINT]
+-- 1. ANCHOR MEMBER: The base case (e.g., top boss where manager_id IS NULL).
+--    Sets the initial level counter (e.g., 1 AS hierarchy_level).
+-- 2. UNION ALL: Combines the anchor results with subsequent recursive passes.
+-- 3. RECURSIVE MEMBER: Joins the source table back to the CTE name itself
+--    and increments the level counter (h.hierarchy_level + 1).
+
+-- [RECURSIVE CTE BLUEPRINT]
+WITH RECURSIVE OrgHierarchy AS (
+    -- 1. Anchor Member (Top-level boss, depth level 1)
+    SELECT 
+        emp_id, 
+        emp_name, 
+        manager_id, 
+        1 AS hierarchy_level
+    FROM employees
+    WHERE manager_id IS NULL
+
+    UNION ALL
+
+    -- 2. Recursive Member (Joins employees to managers already in CTE)
+    SELECT 
+        e.emp_id, 
+        e.emp_name, 
+        e.manager_id, 
+        h.hierarchy_level + 1
+    FROM employees e
+    INNER JOIN OrgHierarchy h 
+        ON e.manager_id = h.emp_id
+)
+SELECT 
+    emp_id, 
+    emp_name, 
+    hierarchy_level
+FROM OrgHierarchy
+ORDER BY hierarchy_level ASC, emp_id ASC;
+
+
+-------------------------------------------------------------------------------
+-- LESSON 4: Function-Wrapped Date Filters & SARGability
+-------------------------------------------------------------------------------
+-- [THE CONCEPT]
+-- Wrapping an indexed column in a function—like DATE(created_at)—forces SQL 
+-- to evaluate that function on EVERY single row in the table. This makes the 
+-- filter NON-SARGable, destroying B-Tree index performance.
+--
+-- [THE FIX]
+-- Use half-open date boundaries (>= start AND < next_day) so the indexed column 
+-- remains unmanipulated on the left side of the comparison operator.
+
+-- NON-SARGable (Forces Full Table Scan):
+-- WHERE DATE(created_at) = '2026-08-01'
+
+-- SARGable (Allows Index Range Scan):
+SELECT order_id, customer_id, created_at
+FROM orders
+WHERE created_at >= '2026-08-01 00:00:00' 
+  AND created_at <  '2026-08-02 00:00:00';
+
+
+-------------------------------------------------------------------------------
+-- LESSON 5: Windowed Running Totals (ROWS BETWEEN)
+-------------------------------------------------------------------------------
+-- [THE CONCEPT]
+-- Standard SUM() OVER (PARTITION BY ... ORDER BY ...) calculates cumulative 
+-- running totals over time without collapsing rows.
+--
+-- [EXPLICIT WINDOW FRAME SYNTAX]
+-- `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` explicitly tells SQL to 
+-- sum all rows from the start of the partition up to the current row.
+
+-- [RUNNING TOTAL BLUEPRINT]
+SELECT 
+    customer_id,
+    transaction_date,
+    amount,
+    SUM(amount) OVER (
+        PARTITION BY customer_id 
+        ORDER BY transaction_date, transaction_id
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS cumulative_spend
+FROM transactions;
+
+-- ============================================================================
+-- SQL MASTER PRACTICE REVIEW (PHASE 1 CORE MASTERY)
+-- ============================================================================
+
+-------------------------------------------------------------------------------
+-- PROBLEM 1: Window Functions (ROW_NUMBER)
+-------------------------------------------------------------------------------
+-- [QUESTION / SCENARIO]
+-- Table: user_logins (login_id, user_id, device_type, login_timestamp)
+-- Task: Find each user's most recent login event. Return user_id, device_type,
+--       and login_timestamp using ROW_NUMBER() OVER (...) inside a CTE or 
+--       subquery. Break timestamp ties by selecting the higher login_id.
+
+-- [YOUR ORIGINAL CODE]
+-- WITH LogIn AS (
+--     SELECT login_id, user_id, device_type, login_timestamp,
+--     row number() OVER (PARTITION BY login_id ORDER BY login_timestamp DESC) AS login_chart
+--     FROM user_logins
+-- )
+-- SELECT user_id, device_type, login_timestamp
+-- FROM LogIn
+-- WHERE login_chart = 1;
+
+-- [CORRECTIONS & EXPLANATIONS]
+-- 1. PARTITION BY Column: Partitioning by login_id created partitions of size 1
+--    because login_id is unique per row. Changing to PARTITION BY user_id 
+--    ensures all logins for a given user are grouped together and ranked.
+-- 2. Tie-Breaker Ordering: To resolve timestamp ties using the higher login_id,
+--    add login_id DESC to the ORDER BY clause inside the window specification.
+-- 3. Keyword Syntax: Standard SQL syntax requires ROW_NUMBER() without spaces.
+
+-- [CORRECT SOLUTION]
+WITH LogIn AS (
+    SELECT 
+        login_id, 
+        user_id, 
+        device_type, 
+        login_timestamp,
+        ROW_NUMBER() OVER (
+            PARTITION BY user_id 
+            ORDER BY login_timestamp DESC, login_id DESC
+        ) AS login_chart
+    FROM user_logins
+)
+SELECT 
+    user_id, 
+    device_type, 
+    login_timestamp
+FROM LogIn
+WHERE login_chart = 1;
+
+
+-------------------------------------------------------------------------------
+-- PROBLEM 2: Conditional Aggregation (SUM + CASE WHEN)
+-------------------------------------------------------------------------------
+-- [QUESTION / SCENARIO]
+-- Table: payments (customer_id, payment_type, amount)
+-- Task: Generate a monthly payment summary per customer showing 3 total columns:
+--       credit_total, debit_total, and paypal_total. Wrap sums in COALESCE(..., 0.00)
+--       and filter to show only customers who have at least 1 Credit payment.
+
+-- [YOUR ORIGINAL CODE]
+-- SELECT customer_id, payment_type, amount,
+-- coalesce(sum(case when payment_type = 'Credit' then amount else 0 end) as credit_total), 0.00)
+-- coalesce(sum(case when payment_type = 'Debit' then amount else 0 end) as debit_total), 0.00)
+-- coalesce(sum(case when payment_type = 'PayPal' then amount else 0 end) as paypal_total), 0.00)
+-- FROM payments;
+
+-- [CORRECTIONS & EXPLANATIONS]
+-- 1. Column Alias Placement: Aliases belong OUTSIDE the function call:
+--    COALESCE(SUM(...), 0.00) AS credit_total.
+-- 2. Detail Columns & Grouping: Individual detail columns (payment_type, amount) 
+--    must be removed from SELECT when pivoting rows into columns, and a 
+--    GROUP BY customer_id clause must be added.
+-- 3. HAVING Clause: Using WHERE payment_type = 'Credit' removes non-credit rows
+--    before aggregation, setting debit and paypal totals to zero. Use 
+--    HAVING COUNT(CASE WHEN payment_type = 'Credit' THEN 1 END) >= 1 instead.
+
+-- [CORRECT SOLUTION]
+SELECT 
+    customer_id,
+    COALESCE(SUM(CASE WHEN payment_type = 'Credit' THEN amount ELSE 0 END), 0.00) AS credit_total,
+    COALESCE(SUM(CASE WHEN payment_type = 'Debit'  THEN amount ELSE 0 END), 0.00) AS debit_total,
+    COALESCE(SUM(CASE WHEN payment_type = 'PayPal' THEN amount ELSE 0 END), 0.00) AS paypal_total
+FROM payments
+GROUP BY customer_id
+HAVING COUNT(CASE WHEN payment_type = 'Credit' THEN 1 END) >= 1;
+
+
+-------------------------------------------------------------------------------
+-- PROBLEM 3: Multi-CTE Conversion Pipelines
+-------------------------------------------------------------------------------
+-- [QUESTION / SCENARIO]
+-- Tables: signups (user_id, source, signup_date), subscriptions (user_id, plan_name)
+-- Task: Use two CTEs (source_signups and source_conversions) to calculate 
+--       conversion_rate_pct per source for signups created in 2026.
+--       Use half-open date bounds (>= '2026-01-01' AND < '2027-01-01') and 
+--       calculate conversion_rate_pct as (conversions * 100.0) / total_signups.
+
+-- [CORRECTIONS & EXPLANATIONS]
+-- 1. Multi-CTE Isolation: Processing signups and paid conversions in separate 
+--    CTE blocks prevents join fan-out and duplicated row counts.
+-- 2. Preserving Zero-Conversion Sources: A LEFT JOIN between source_signups 
+--    and source_conversions keeps traffic sources with signups but 0 conversions.
+-- 3. Floating-Point Precision: Multiplying by 100.0 prevents integer division 
+--    truncation in database engines like SQL Server or PostgreSQL.
+
+-- [CORRECT SOLUTION]
+WITH source_signups AS (
+    SELECT 
+        source, 
+        COUNT(user_id) AS total_signups
+    FROM signups
+    WHERE signup_date >= '2026-01-01' 
+      AND signup_date <  '2027-01-01'
+    GROUP BY source
+),
+source_conversions AS (
+    SELECT 
+        s.source, 
+        COUNT(DISTINCT sub.user_id) AS converted_users
+    FROM signups s
+    INNER JOIN subscriptions sub 
+        ON s.user_id = sub.user_id
+    WHERE s.signup_date >= '2026-01-01' 
+      AND s.signup_date <  '2027-01-01'
+    GROUP BY s.source
+)
+SELECT 
+    ss.source, 
+    ss.total_signups, 
+    COALESCE(sc.converted_users, 0) AS converted_users, 
+    ROUND(
+        (COALESCE(sc.converted_users, 0) * 100.0) / ss.total_signups, 
+        2
+    ) AS conversion_rate_pct
+FROM source_signups ss
+LEFT JOIN source_conversions sc 
+    ON ss.source = sc.source
+ORDER BY conversion_rate_pct DESC;
+
+
+-------------------------------------------------------------------------------
+-- PROBLEM 4: Self-Joins & Manager Hierarchies
+-------------------------------------------------------------------------------
+-- [QUESTION / SCENARIO]
+-- Table: employees (emp_id, emp_name, title, manager_id)
+-- Task: Report on employees and their direct managers. Select e.emp_id, 
+--       e.emp_name, e.title, and m.emp_name as manager_name using a LEFT JOIN.
+--       Handle top-level executives using COALESCE(m.emp_name, 'No Manager').
+
+-- [YOUR ORIGINAL CODE]
+-- SELECT e.emp_id, e.emp_name, e.title, m.emp_name AS manager_name
+-- coalesce(m.emp_name, 'No Manager')
+-- FROM employees e
+-- LEFT JOIN employees m
+-- ON e.manager_id = m.employee_id
+
+-- [CORRECTIONS & EXPLANATIONS]
+-- 1. Wrapping Null Handlers: COALESCE belongs wrapped directly around m.emp_name, 
+--    with the alias applied to the entire expression.
+-- 2. Column Name Alignment: The primary key column in the schema is emp_id. 
+--    The join condition should be m.emp_id instead of m.employee_id.
+-- 3. Delimiters: Ensure all expressions in the SELECT list have trailing commas.
+
+-- [CORRECT SOLUTION]
+SELECT 
+    e.emp_id, 
+    e.emp_name, 
+    e.title, 
+    COALESCE(m.emp_name, 'No Manager') AS manager_name
+FROM employees e
+LEFT JOIN employees m
+    ON e.manager_id = m.emp_id;
+
+
+-------------------------------------------------------------------------------
+-- PROBLEM 5: Composite Covering Indexes
+-------------------------------------------------------------------------------
+-- [QUESTION / SCENARIO]
+-- Target Query:
+--   SELECT department_id, job_title, SUM(salary)
+--   FROM employee_payroll
+--   WHERE status = 'ACTIVE' AND hire_date >= '2026-01-01'
+--   GROUP BY department_id, job_title;
+-- Task: Write the CREATE INDEX statement for a covering index (Index-Only Scan).
+-- Order: Equality Filter -> Range Filter -> GROUP BY Columns -> Aggregated Payload.
+
+-- [YOUR ORIGINAL CODE]
+-- CREATE INDEX idx_employee_status_hire_department_job_salary
+-- ON employee_payroll (status, hire_date, department_id, job_title, salary)
+
+-- [CORRECTIONS & EXPLANATIONS]
+-- Status: 100% CORRECT.
+-- Explanation: Column order follows B-Tree evaluation rules perfectly:
+-- 1. Equality Column (status)
+-- 2. Range Column (hire_date)
+-- 3. Grouping Columns (department_id, job_title)
+-- 4. Payload Column (salary)
+
+-- [CORRECT SOLUTION]
+CREATE INDEX idx_employee_status_hire_department_job_salary
+ON employee_payroll (status, hire_date, department_id, job_title, salary);
+
+
+-------------------------------------------------------------------------------
+-- PROBLEM 6: SARGable Math Optimization
+-------------------------------------------------------------------------------
+-- [QUESTION / SCENARIO]
+-- Slow Query:
+--   SELECT product_id, product_name, unit_price
+--   FROM products
+--   WHERE unit_price - 15.00 >= 85.00 AND is_active = 1;
+-- Task: Rewrite the WHERE clause to isolate unit_price so SQL can use a B-Tree index.
+
+-- [YOUR ORIGINAL CODE]
+-- SELECT product_id, product_name, unit_price
+-- FROM products
+-- WHERE unit_price >= 100.00
+-- AND is_active =1;
+
+-- [CORRECTIONS & EXPLANATIONS]
+-- Status: 100% CORRECT.
+-- Explanation: Adding 15.00 to both sides of the inequality (85.00 + 15.00 = 100.00)
+-- isolates unit_price on the left side. This removes row-by-row math evaluation and
+-- enables a fast B-Tree Index Range Scan.
+
+-- [CORRECT SOLUTION]
+SELECT 
+    product_id, 
+    product_name, 
+    unit_price
+FROM products
+WHERE unit_price >= 100.00
+  AND is_active = 1;
