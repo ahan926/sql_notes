@@ -1262,3 +1262,123 @@ INNER JOIN employees m
 WHERE e.salary > m.salary;
 
 -- Key Takeaway: Alias the table twice (e for employee, m for manager) and join on e.manager_id = m.emp_id.
+
+# SQL Practice Reference Guide: Phase 4
+
+## Problem 13: Correlated Subquery with `EXISTS`
+
+### Problem
+Find all customers who have placed at least one order, without creating duplicate customer rows or returning extra columns.
+
+* **Tables:** 
+  * `customers (customer_id, customer_name)`
+  * `orders (order_id, customer_id, order_date)`
+* **Requirement:** Use a correlated subquery with `WHERE EXISTS` instead of a `JOIN` or `IN`.
+
+### Solution
+SELECT 
+    c.customer_id, 
+    c.customer_name
+FROM customers c
+WHERE EXISTS (
+    SELECT 1 
+    FROM orders o 
+    WHERE o.customer_id = c.customer_id
+);
+
+### Key Takeaway & Q&A
+* **`EXISTS` Logic:** Operates as a boolean pass/fail test (`TRUE`/`FALSE`) for every row evaluated in the outer query.
+* **`SELECT 1` Purpose:** The `1` is a constant literal flag, **not** a reference to column position #1. It serves as a lightweight indicator 
+to signal that a matching row exists without forcing the engine to retrieve actual column data.
+* **Performance:** Standard best practice for checking row existence because the database can stop scanning as soon as the first match is located.
+
+---
+
+## Question & Answer Breakdown: Understanding `SELECT 1` in `EXISTS`
+
+### Q: What does `1` mean in `SELECT 1`? Does it stand for the first column?
+> **A:** No. `1` is a literal constant value, not a column index reference.
+> * Running `SELECT 1 FROM orders` returns a result set where every single cell contains the integer `1`.
+> * The **only** places in SQL where numbers refer to column positional indices are **`ORDER BY`** and **`GROUP BY`** (e.g., `ORDER BY 1, 2`).
+
+### Q: What does the raw output of `SELECT 1 FROM orders WHERE customer_id = 5` look like?
+> **A:** It produces a single column containing `1` for every matching row found:
+>
+> | ?column? |
+> | :--- |
+> | `1` |
+> | `1` |
+
+### Q: What does the output of `WHERE EXISTS (SELECT 1 FROM orders WHERE customer_id = 5)` look like?
+> **A:** Within a `WHERE` clause, `EXISTS (...)` evaluates internally to a single **boolean value** (`TRUE` or `FALSE`). 
+It does **not** append extra columns or display literal `1`s in the outer result set. It simply filters the outer query rows based on whether matching records exist.
+
+---
+
+## Problem 14: Pattern Matching & Wildcards (`LIKE`)
+
+### Problem
+Audit account records for specific internal email domains. Return `user_id` and `email` for all users whose email ends with `@company.com` OR `@subsidiary.com`.
+
+* **Table:** `users (user_id, email, status)`
+* **Requirement:** Perform case-insensitive wildcard pattern matching with `LIKE` and `LOWER()`.
+
+### Solution
+SELECT 
+    user_id, 
+    email
+FROM users
+WHERE LOWER(email) LIKE '%@company.com' 
+   OR LOWER(email) LIKE '%@subsidiary.com';
+
+### Key Takeaway & Common Pitfalls
+* **Syntax Rule:** SQL requires complete conditional statements on both sides of a logical operator (`OR`). 
+Writing `WHERE email LIKE '%@company.com' OR '%@subsidiary.com'` will throw a syntax error.
+* **Wildcard Positioning:** Using `%` only at the start (`'%@company.com'`) anchors the match to the exact ending of the string. 
+A trailing wildcard (`'%@company.com%'`) would unintentionally match invalid domains like `@company.com.attacker.com`.
+
+---
+
+## Problem 15: Calculating Rates with Conditional Aggregation
+
+### Problem
+Calculate the cancellation rate for each customer by dividing total cancelled orders by total orders.
+
+* **Table:** `orders (order_id, customer_id, order_status)`
+* **Requirement:** Use conditional `CASE WHEN` aggregation inside `SUM()`, divide by total count, and group by `customer_id`.
+
+### Solution
+SELECT 
+    customer_id, 
+    SUM(CASE WHEN order_status = 'Cancelled' THEN 1.0 ELSE 0 END) / COUNT(*) AS cancellation_rate
+FROM orders
+GROUP BY customer_id;
+
+### Key Takeaway & Q&A
+* **Implicit Float Conversion:** Using `1.0` instead of `1` forces decimal division, preventing integer division truncation in database 
+engines like PostgreSQL and SQL Server (e.g., returning `0.25` instead of rounding down to `0`).
+* **Conditional Aggregation Pattern:** Wrapping `CASE WHEN` inside `SUM()` acts as an in-line filter flag, 
+allowing you to sum selective subsets of rows within a single query execution pass.
+
+---
+
+## Question & Answer Breakdown: How `COUNT(*)` Operates with `GROUP BY`
+
+### Q: Does `COUNT(*)` in this context count all rows in the entire table for the cancellation rate?
+> **A:** No. Because the query includes `GROUP BY customer_id`, all aggregate functions—including `COUNT(*)`—operate strictly within each individual customer's group slice.
+>
+> **Execution Breakdown Example:**
+>
+> **`orders` table:**
+> | order_id | customer_id | order_status |
+> | :--- | :--- | :--- |
+> | `101` | `1` | Completed |
+> | `102` | `1` | Cancelled |
+> | `103` | `1` | Completed |
+> | `104` | `1` | Cancelled |
+> | `105` | `2` | Completed |
+>
+> * **Customer 1:** `COUNT(*)` = 4 total rows | `SUM(CASE ...)` = 2.0 cancelled | **Rate:** `2.0 / 4 = 0.50`
+> * **Customer 2:** `COUNT(*)` = 1 total row | `SUM(CASE ...)` = 0.0 cancelled | **Rate:** `2.0 / 1 = 0.00`
+>
+> *(Note: Removing `GROUP BY customer_id` would cause `COUNT(*)` to count the total rows in the entire table, returning a single overall company cancellation rate.)*
